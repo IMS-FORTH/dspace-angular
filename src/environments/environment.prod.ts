@@ -36,8 +36,12 @@ export const environment = {
   ],
   themes: [
     {
-      // The default dspace theme
-      name: 'ims'
+      // Our custom dspace theme
+      name: 'dspace'
     },
-  ]
+  ],
+  mediaViewer: {
+    image: true,
+    video: true
+  },
 };

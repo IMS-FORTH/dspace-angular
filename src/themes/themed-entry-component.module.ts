@@ -2,7 +2,7 @@ import { NgModule } from '@angular/core';
 import { ENTRY_COMPONENTS as CUSTOM } from './custom/entry-components';
 
 const ENTRY_COMPONENTS = [
-  ...CUSTOM,
+  //...CUSTOM,
 ];
 
 
