@@ -37,11 +37,11 @@ export const environment = {
   themes: [
     {
       // Our custom dspace theme
-      name: 'dspace'
+      name: 'ims'
     },
   ],
   mediaViewer: {
     image: true,
-    video: true
+    video: false
   },
 };

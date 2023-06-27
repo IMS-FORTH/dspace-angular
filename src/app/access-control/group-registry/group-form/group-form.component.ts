@@ -1,5 +1,5 @@
-import { Component, EventEmitter, HostListener, OnDestroy, OnInit, Output } from '@angular/core';
-import { FormGroup } from '@angular/forms';
+import { Component, EventEmitter, HostListener, OnDestroy, OnInit, Output, ChangeDetectorRef } from '@angular/core';
+import { UntypedFormGroup } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap';
 import {
@@ -16,7 +16,7 @@ import {
   of as observableOf,
   Subscription,
 } from 'rxjs';
-import { catchError, map, switchMap, take, filter } from 'rxjs/operators';
+import { catchError, map, switchMap, take, filter, debounceTime } from 'rxjs/operators';
 import { getCollectionEditRolesRoute } from '../../../collection-page/collection-page-routing-paths';
 import { getCommunityEditRolesRoute } from '../../../community-page/community-page-routing-paths';
 import { DSpaceObjectDataService } from '../../../core/data/dspace-object-data.service';
@@ -45,6 +45,9 @@ import { NotificationsService } from '../../../shared/notifications/notification
 import { followLink } from '../../../shared/utils/follow-link-config.model';
 import { NoContent } from '../../../core/shared/NoContent.model';
 import { Operation } from 'fast-json-patch';
+import { ValidateGroupExists } from './validators/group-exists.validator';
+import { DSONameService } from '../../../core/breadcrumbs/dso-name.service';
+import { environment } from '../../../../environments/environment';
 
 @Component({
   selector: 'ds-group-form',
@@ -93,7 +96,7 @@ export class GroupFormComponent implements OnInit, OnDestroy {
   /**
    * A FormGroup that combines all inputs
    */
-  formGroup: FormGroup;
+  formGroup: UntypedFormGroup;
 
   /**
    * An EventEmitter that's fired whenever the form is being submitted
@@ -126,7 +129,14 @@ export class GroupFormComponent implements OnInit, OnDestroy {
    */
   public AlertTypeEnum = AlertType;
 
-  constructor(public groupDataService: GroupDataService,
+  /**
+   * Subscription to email field value change
+   */
+  groupNameValueChangeSubscribe: Subscription;
+
+
+  constructor(
+    public groupDataService: GroupDataService,
     private ePersonDataService: EPersonDataService,
     private dSpaceObjectDataService: DSpaceObjectDataService,
     private formBuilderService: FormBuilderService,
@@ -136,7 +146,10 @@ export class GroupFormComponent implements OnInit, OnDestroy {
     protected router: Router,
     private authorizationService: AuthorizationDataService,
     private modalService: NgbModal,
-    public requestService: RequestService) {
+    public requestService: RequestService,
+    protected changeDetectorRef: ChangeDetectorRef,
+    public dsoNameService: DSONameService,
+  ) {
   }
 
   ngOnInit() {
@@ -186,12 +199,21 @@ export class GroupFormComponent implements OnInit, OnDestroy {
         label: groupDescription,
         name: 'groupDescription',
         required: false,
+        spellCheck: environment.form.spellCheck,
       });
       this.formModel = [
         this.groupName,
         this.groupDescription,
       ];
       this.formGroup = this.formBuilderService.createFormGroup(this.formModel);
+
+      if (!!this.formGroup.controls.groupName) {
+        this.formGroup.controls.groupName.setAsyncValidators(ValidateGroupExists.createValidator(this.groupDataService));
+        this.groupNameValueChangeSubscribe = this.groupName.valueChanges.pipe(debounceTime(300)).subscribe(() => {
+          this.changeDetectorRef.detectChanges();
+        });
+      }
+
       this.subs.push(
         observableCombineLatest(
           this.groupDataService.getActiveGroup(),
@@ -201,6 +223,10 @@ export class GroupFormComponent implements OnInit, OnDestroy {
         ).subscribe(([activeGroup, canEdit, linkedObject]) => {
 
           if (activeGroup != null) {
+
+            // Disable group name exists validator
+            this.formGroup.controls.groupName.clearAsyncValidators();
+
             this.groupBeingEdited = activeGroup;
 
             if (linkedObject?.name) {
@@ -309,7 +335,7 @@ export class GroupFormComponent implements OnInit, OnDestroy {
       .subscribe((list: PaginatedList<Group>) => {
         if (list.totalElements > 0) {
           this.notificationsService.error(this.translateService.get(this.messagePrefix + '.notification.' + notificationSection + '.failure.groupNameInUse', {
-            name: group.name
+            name: this.dsoNameService.getName(group),
           }));
         }
       }));
@@ -324,8 +350,8 @@ export class GroupFormComponent implements OnInit, OnDestroy {
 
     if (hasValue(this.groupDescription.value)) {
       operations = [...operations, {
-        op: 'replace',
-        path: '/metadata/dc.description/0/value',
+        op: 'add',
+        path: '/metadata/dc.description',
         value: this.groupDescription.value
       }];
     }
@@ -342,10 +368,10 @@ export class GroupFormComponent implements OnInit, OnDestroy {
       getFirstCompletedRemoteData()
     ).subscribe((rd: RemoteData<Group>) => {
       if (rd.hasSucceeded) {
-        this.notificationsService.success(this.translateService.get(this.messagePrefix + '.notification.edited.success', { name: rd.payload.name }));
+        this.notificationsService.success(this.translateService.get(this.messagePrefix + '.notification.edited.success', { name: this.dsoNameService.getName(rd.payload) }));
         this.submitForm.emit(rd.payload);
       } else {
-        this.notificationsService.error(this.translateService.get(this.messagePrefix + '.notification.edited.failure', { name: group.name }));
+        this.notificationsService.error(this.translateService.get(this.messagePrefix + '.notification.edited.failure', { name: this.dsoNameService.getName(group) }));
         this.cancelForm.emit();
       }
     });
@@ -405,11 +431,11 @@ export class GroupFormComponent implements OnInit, OnDestroy {
             this.groupDataService.delete(group.id).pipe(getFirstCompletedRemoteData())
               .subscribe((rd: RemoteData<NoContent>) => {
                 if (rd.hasSucceeded) {
-                  this.notificationsService.success(this.translateService.get(this.messagePrefix + '.notification.deleted.success', { name: group.name }));
-                  this.reset();
+                  this.notificationsService.success(this.translateService.get(this.messagePrefix + '.notification.deleted.success', { name: this.dsoNameService.getName(group) }));
+                  this.onCancel();
                 } else {
                   this.notificationsService.error(
-                    this.translateService.get(this.messagePrefix + '.notification.deleted.failure.title', { name: group.name }),
+                    this.translateService.get(this.messagePrefix + '.notification.deleted.failure.title', { name: this.dsoNameService.getName(group) }),
                     this.translateService.get(this.messagePrefix + '.notification.deleted.failure.content', { cause: rd.errorMessage }));
                 }
               });
@@ -420,22 +446,17 @@ export class GroupFormComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * This method will ensure that the page gets reset and that the cache is cleared
-   */
-  reset() {
-    this.groupDataService.getBrowseEndpoint().pipe(take(1)).subscribe((href: string) => {
-      this.requestService.removeByHrefSubstring(href);
-    });
-    this.onCancel();
-  }
-
-  /**
    * Cancel the current edit when component is destroyed & unsub all subscriptions
    */
   @HostListener('window:beforeunload')
   ngOnDestroy(): void {
     this.groupDataService.cancelEditGroup();
     this.subs.filter((sub) => hasValue(sub)).forEach((sub) => sub.unsubscribe());
+
+    if ( hasValue(this.groupNameValueChangeSubscribe) ) {
+      this.groupNameValueChangeSubscribe.unsubscribe();
+    }
+
   }
 
   /**
